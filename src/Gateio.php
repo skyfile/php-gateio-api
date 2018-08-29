@@ -2,6 +2,7 @@
 namespace Gateio;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
 
 /**
  * Gate.io
@@ -15,7 +16,11 @@ class API
 
     private $api_secret = '';
 
+    private $cert_pem = '';
+
     private $client;
+
+    private $time_out = 2;
 
     private $error = [
         'code' => 0,
@@ -24,10 +29,12 @@ class API
 
     public static $obj;
 
-    protected function __construct($key = null, $secret = null)
+    protected function __construct($key = null, $secret = null, $certPemPath = null, $timeOut = null)
     {
         $key && ($this->api_key = $key);
         $secret && ($this->api_secret = $secret);
+        $timeOut && ($this->time_out = $timeOut);
+        $certPemPath && ($this->cert_pem = $certPemPath);
         $this->client = new Client(['base_uri' => self::API_URI]);
     }
 
@@ -62,6 +69,27 @@ class API
         ];
     }
 
+    public function getCert()
+    {
+        if (!$this->cert_pem || !is_file($this->cert_pem)) {
+            try {
+                $response = (new Client())->get('https://curl.haxx.se/ca/cacert.pem');
+                $file     = $response->getBody()->getContents();
+            } catch (RequestException $e) {
+                $this->setErr($e->getCode(), $e->getMessage());
+                $file = '';
+            }
+            if (!$file) {
+                return [];
+            }
+            $filePath = getcwd() . '/cacert.pem';
+            if (file_put_contents($filePath, $file)) {
+                $this->cert_pem = $filePath;
+            }
+        }
+        return ['verify' => [$this->cert_pem]];
+    }
+
     /**
      * 发送请求
      *
@@ -76,6 +104,8 @@ class API
             'headers'     => $this->getHeaders($this->getSignature($data)),
             'form_params' => $data,
         ] : ['query' => $data];
+        $params            = array_merge($params, $this->getCert());
+        $params['timeout'] = $this->time_out;
         try {
             $response = $this->client->request($method, $url, $params);
             $res      = json_decode($response->getBody()->getContents(), true);
@@ -83,7 +113,7 @@ class API
                 $this->setErr($res['code'], Error::CODE[$res['code']] ?? ($res['message'] ?? ''));
                 $res = false;
             }
-        } catch (\Exception $e) {
+        } catch (RequestException $e) {
             $this->setErr($e->getCode(), $e->getMessage());
             $res = false;
         }
@@ -121,7 +151,7 @@ class API
      */
     public function getAllPairs()
     {
-        return $this->client->request('GET', 'pairs');
+        return $this->request('GET', 'pairs');
     }
 
     /**
@@ -131,7 +161,7 @@ class API
      */
     public function getMarketInfo()
     {
-        return $this->client->request('GET', 'marketinfo');
+        return $this->request('GET', 'marketinfo');
     }
 
     /**
@@ -167,7 +197,7 @@ class API
      */
     public function getMarketList()
     {
-        return $this->client->request('GET', 'marketlist');
+        return $this->request('GET', 'marketlist');
     }
 
     /**
